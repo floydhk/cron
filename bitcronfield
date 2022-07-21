@@ -1,0 +1,225 @@
+//
+// Source code recreated from a .class file by IntelliJ IDEA
+// (powered by Fernflower decompiler)
+//
+
+package org.springframework.scheduling.support;
+
+import java.time.DateTimeException;
+import java.time.temporal.Temporal;
+import java.time.temporal.ValueRange;
+import org.springframework.lang.Nullable;
+import org.springframework.scheduling.support.CronField.Type;
+import org.springframework.util.Assert;
+import org.springframework.util.StringUtils;
+
+final class BitsCronField extends CronField {
+    private static final long MASK = -1L;
+    @Nullable
+    private static BitsCronField zeroNanos = null;
+    private long bits;
+
+    private BitsCronField(Type type) {
+        super(type);
+    }
+
+    public static BitsCronField zeroNanos() {
+        if (zeroNanos == null) {
+            BitsCronField field = new BitsCronField(Type.NANO);
+            field.setBit(0);
+            zeroNanos = field;
+        }
+
+        return zeroNanos;
+    }
+
+    public static BitsCronField parseSeconds(String value) {
+        return parseField(value, Type.SECOND);
+    }
+
+    public static BitsCronField parseMinutes(String value) {
+        return parseField(value, Type.MINUTE);
+    }
+
+    public static BitsCronField parseHours(String value) {
+        return parseField(value, Type.HOUR);
+    }
+
+    public static BitsCronField parseDaysOfMonth(String value) {
+        return parseDate(value, Type.DAY_OF_MONTH);
+    }
+
+    public static BitsCronField parseMonth(String value) {
+        return parseField(value, Type.MONTH);
+    }
+
+    public static BitsCronField parseDaysOfWeek(String value) {
+        BitsCronField result = parseDate(value, Type.DAY_OF_WEEK);
+        if (result.getBit(0)) {
+            result.setBit(7);
+            result.clearBit(0);
+        }
+
+        return result;
+    }
+
+    private static BitsCronField parseDate(String value, Type type) {
+        if (value.equals("?")) {
+            value = "*";
+        }
+
+        return parseField(value, type);
+    }
+
+    private static BitsCronField parseField(String value, Type type) {
+        Assert.hasLength(value, "Value must not be empty");
+        Assert.notNull(type, "Type must not be null");
+
+        try {
+            BitsCronField result = new BitsCronField(type);
+            String[] fields = StringUtils.delimitedListToStringArray(value, ",");
+            String[] var4 = fields;
+            int var5 = fields.length;
+
+            for(int var6 = 0; var6 < var5; ++var6) {
+                String field = var4[var6];
+                int slashPos = field.indexOf(47);
+                if (slashPos == -1) {
+                    ValueRange range = parseRange(field, type);
+                    result.setBits(range);
+                } else {
+                    String rangeStr = value.substring(0, slashPos);
+                    String deltaStr = value.substring(slashPos + 1);
+                    ValueRange range = parseRange(rangeStr, type);
+                    if (rangeStr.indexOf(45) == -1) {
+                        range = ValueRange.of(range.getMinimum(), type.range().getMaximum());
+                    }
+
+                    int delta = Integer.parseInt(deltaStr);
+                    if (delta <= 0) {
+                        throw new IllegalArgumentException("Incrementer delta must be 1 or higher");
+                    }
+
+                    result.setBits(range, delta);
+                }
+            }
+
+            return result;
+        } catch (IllegalArgumentException | DateTimeException var13) {
+            String msg = var13.getMessage() + " '" + value + "'";
+            throw new IllegalArgumentException(msg, var13);
+        }
+    }
+
+    private static ValueRange parseRange(String value, Type type) {
+        if (value.equals("*")) {
+            return type.range();
+        } else {
+            int hyphenPos = value.indexOf(45);
+            int min;
+            if (hyphenPos == -1) {
+                min = type.checkValidValue(Integer.parseInt(value));
+                return ValueRange.of((long)min, (long)min);
+            } else {
+                min = Integer.parseInt(value.substring(0, hyphenPos));
+                int max = Integer.parseInt(value.substring(hyphenPos + 1));
+                min = type.checkValidValue(min);
+                max = type.checkValidValue(max);
+                return ValueRange.of((long)min, (long)max);
+            }
+        }
+    }
+
+    @Nullable
+    public <T extends Temporal & Comparable<? super T>> T nextOrSame(T temporal) {
+        int current = this.type().get(temporal);
+        int next = this.nextSetBit(current);
+        if (next == -1) {
+            temporal = this.type().rollForward(temporal);
+            next = this.nextSetBit(0);
+        }
+
+        if (next == current) {
+            return temporal;
+        } else {
+            int count = 0;
+
+            for(current = this.type().get(temporal); current != next && count++ < 366; current = this.type().get(temporal)) {
+                temporal = this.type().elapseUntil(temporal, next);
+            }
+
+            return count >= 366 ? null : this.type().reset(temporal);
+        }
+    }
+
+    boolean getBit(int index) {
+        return (this.bits & 1L << index) != 0L;
+    }
+
+    private int nextSetBit(int fromIndex) {
+        long result = this.bits & -1L << fromIndex;
+        return result != 0L ? Long.numberOfTrailingZeros(result) : -1;
+    }
+
+    private void setBits(ValueRange range) {
+        if (range.getMinimum() == range.getMaximum()) {
+            this.setBit((int)range.getMinimum());
+        } else {
+            long minMask = -1L << (int)range.getMinimum();
+            long maxMask = -1L >>> (int)(-(range.getMaximum() + 1L));
+            this.bits |= minMask & maxMask;
+        }
+
+    }
+
+    private void setBits(ValueRange range, int delta) {
+        if (delta == 1) {
+            this.setBits(range);
+        } else {
+            for(int i = (int)range.getMinimum(); (long)i <= range.getMaximum(); i += delta) {
+                this.setBit(i);
+            }
+        }
+
+    }
+
+    private void setBit(int index) {
+        this.bits |= 1L << index;
+    }
+
+    private void clearBit(int index) {
+        this.bits &= ~(1L << index);
+    }
+
+    public int hashCode() {
+        return Long.hashCode(this.bits);
+    }
+
+    public boolean equals(Object o) {
+        if (this == o) {
+            return true;
+        } else if (!(o instanceof BitsCronField)) {
+            return false;
+        } else {
+            BitsCronField other = (BitsCronField)o;
+            return this.type() == other.type() && this.bits == other.bits;
+        }
+    }
+
+    public String toString() {
+        StringBuilder builder = new StringBuilder(this.type().toString());
+        builder.append(" {");
+        int i = this.nextSetBit(0);
+        if (i != -1) {
+            builder.append(i);
+
+            for(i = this.nextSetBit(i + 1); i != -1; i = this.nextSetBit(i + 1)) {
+                builder.append(", ");
+                builder.append(i);
+            }
+        }
+
+        builder.append('}');
+        return builder.toString();
+    }
+}
